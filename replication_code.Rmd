@@ -1,0 +1,118 @@
+---
+title: "Replication"
+author: "Eugenia Tarnikova"
+date: "2022-11-06"
+output: html_document
+---
+
+```{r warning = F, message = F, echo = F}
+library(dplyr)
+library(lmtest)
+library(stargazer)
+library(ggplot2)
+library(foreign)
+library(ggpubr)
+library(openxlsx)
+library(sandwich)
+library(rjags)
+```
+
+```{r}
+data <- read.dta('repfiles/Clean Data, March 2020.dta')
+
+data <- na.omit(dplyr::select(data, number, socialmedia, conthink, socmedia, pid, ideo, 
+                       interest, edu, age, income, female, black, hispanic))
+```
+
+```{r}
+labels <- c("Social Media for News
+Social Media Frequency
+Conspiracy Thinking
+Partisanship
+Ideology
+Interest in Politics
+Education
+Age
+Income
+Female
+Black
+Hispanic
+SM Freq * Conspiracy
+SM for News * Conspiracy")
+```
+
+1. Original Models Replication
+
+```{r warning = F, message = F}
+models <- list()
+
+models[[1]] <- lm(number ~ socmedia + conthink + pid + ideo + interest + edu + age + income + 
+                  female + black + hispanic, data = data)
+models[[2]] <- lm(number ~ socialmedia + socmedia + conthink + pid + ideo + interest + edu + age + income + 
+                  female + black + hispanic, data = data)
+models[[3]] <- lm(number ~ socialmedia * conthink + socmedia * conthink + pid + ideo + interest + edu + age + income + 
+                  female + black + hispanic, data = data)
+
+coefs <- data.frame(models[[3]]$coefficients)
+
+stargazer(models, type = 'text',
+          covariate.labels =  strsplit(labels, '\n')[[1]],
+          no.space = T,
+          dep.var.labels = "Number of Conspiracy Beliefs")
+
+```
+
+
+2. Bayesian Model
+
+```{r}
+# data preparation
+
+data_bayesian <- list(N=nrow(data), y=data$number,  
+                 socialmedia=data$socialmedia,
+                 socmedia = data$socmedia,
+                 conthink = data$conthink,
+                 pid = data$pid,
+                 ideo = data$ideo,
+                 interest = data$interest,
+                 edu = data$edu,
+                 age = data$age,
+                 income = data$income,
+                 female = data$female,
+                 black = data$black,
+                 hispanic = data$hispanic,
+                 b0=rep(0,15), 
+                 B0=diag(0.01,15)) 
+
+# jags model
+
+p <- jags.model("rep_model.txt", data=data_bayesian)
+update(p, 50000) #  burn-in
+p.posterior <- coda.samples(p, c("beta","sigma"), 200000, 10) # 10 thinning
+
+```
+
+Convergence assessment
+```{r}
+geweke.diag(p.posterior)
+raftery.diag(p.posterior)
+```
+
+Visual Diagnostics
+```{r}
+plot(p.posterior)
+```
+Summary
+```{r}
+summary(p.posterior)
+hpd <- data.frame(HPDinterval(p1.posterior)) #.95
+sum <- data.frame(summary(p.posterior)$statistics)
+summary_table <- cbind(sum[1], hpd)
+
+compar <- cbind(coefs, summary_table)
+stargazer(summary_table, summary = F, type = 'text')
+
+
+```
+
+
